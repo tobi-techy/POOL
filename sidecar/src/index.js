@@ -1,6 +1,11 @@
 // POOL iMessage sidecar. Only process that talks to Photon.
 // Receives Spectrum messages, forwards normalized JSON to the Python agent,
 // exposes POST /send so Python can reply. No trading logic here.
+//
+// Photon API notes (Stable docs, connection-and-routing):
+// - inbound narrowing: imessage(space), imessage(message); sender via imessage(message).sender
+// - outbound: imessage(app).user(phone) -> im.space.create(user) -> space.send(text)
+// - quotas: 5,000 msgs/server/day; 50 new conversations/line/day
 import http from "node:http";
 import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
@@ -23,6 +28,7 @@ const app = await Spectrum({
 });
 
 const seen = new Set();
+const spaces = new Map(); // phone -> Space (DMs are stable per line)
 
 async function forwardToAgent(phone, text, messageId) {
   if (messageId && seen.has(messageId)) return;
@@ -42,15 +48,27 @@ async function forwardToAgent(phone, text, messageId) {
 (async () => {
   for await (const [space, message] of app.messages) {
     try {
+      if (message.platform !== "imessage") continue;
       if (message.content?.type !== "text") continue;
-      const text = message.content.text ?? "";
-      const phone = message.sender?.id ?? space.id;
-      await forwardToAgent(phone, text, message.id);
+      const im = imessage(space);
+      spaces.set(im.phone, space); // cache live space for replies
+      const sender = imessage(message).sender;
+      const phone = sender?.address ?? sender?.id ?? space.id;
+      await forwardToAgent(phone, message.content.text ?? "", message.id);
     } catch (e) {
       console.error("inbound error", e);
     }
   }
 })();
+
+async function spaceFor(phone) {
+  if (spaces.has(phone)) return spaces.get(phone);
+  const im = imessage(app);
+  const user = await im.user(phone);
+  const space = await im.space.create(user); // DM; counts toward 50 new convos/line/day
+  spaces.set(phone, space);
+  return space;
+}
 
 // Outbound: Python -> space.send
 const server = http.createServer(async (req, res) => {
@@ -67,8 +85,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     try {
-      const { imessage: im } = app; // provider-scoped helpers
-      const space = await im.space(phone);
+      const space = await spaceFor(phone);
       for (const t of texts) await space.send(t);
       res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ ok: true }));
     } catch (e) {

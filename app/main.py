@@ -1,7 +1,6 @@
 """POOL agent. Receives normalized inbound events from the sidecar, replies via sidecar."""
-import time
-import urllib.request
 import json as jsonlib
+import urllib.request
 
 from fastapi import FastAPI, Header, HTTPException
 
@@ -35,27 +34,33 @@ def health() -> dict:
 
 
 @app.post("/internal/inbound")
-def inbound(payload: dict, x_sidecar_secret: str = Header(default="")) -> dict:
+async def inbound(payload: dict, x_sidecar_secret: str = Header(default="")) -> dict:
     if settings.sidecar_secret and x_sidecar_secret != settings.sidecar_secret:
         raise HTTPException(status_code=401, detail="bad sidecar secret")
     phone = str(payload.get("phone", "unknown"))
     text = str(payload.get("text", ""))
     log_event(settings.db_path, "user", "sidecar", "ok", f"inbound from {phone}: {text[:120]}")
-    texts = reply(text, phone)
-    log_event(settings.db_path, "api", "agent", "ok", f"reply {len(texts)} texts to {phone}")
-    _send_via_sidecar(phone, texts)
+    try:
+        texts = await reply(settings.db_path, phone, text)
+    except Exception as e:  # noqa: BLE001 — the user always gets an answer
+        log_event(settings.db_path, "api", "agent", "error", f"reply failed: {e}")
+        texts = ["something hiccuped on my end — mind saying that once more?"]
+    try:
+        _send_via_sidecar(phone, texts)
+    except Exception as e:  # noqa: BLE001
+        log_event(settings.db_path, "api", "sidecar-send", "error", f"send failed: {e}")
+        return {"ok": False, "error": "sidecar send failed"}
     return {"ok": True, "sent": len(texts)}
 
 
 @app.post("/hooks/spectrum")
-def spectrum_hook(payload: dict) -> dict:
+async def spectrum_hook(payload: dict) -> dict:
     """Direct Photon webhook fallback (same shape as sidecar forwards)."""
-    return inbound(payload, x_sidecar_secret=settings.sidecar_secret)
+    return await inbound(payload, x_sidecar_secret=settings.sidecar_secret)
 
 
 @app.get("/debug/pilots")
 async def debug_pilots() -> dict:
-    t0 = time.perf_counter()
     try:
         rows, ms = await btools.fetch_ondo_bsc()
     except Exception as e:  # noqa: BLE001 — tonight we record, not crash
