@@ -1,0 +1,20 @@
+{
+  "note": "FALLBACK — www.binance.com unreachable from dev machine on 2026-10-04 (connect timeout). Replace via scripts/seed_pilots.py once the Web3 API key/network path works. Legs below are ticker watchlists, NOT validated contracts.",
+  "pelosi-style": {
+    "note": "from public disclosures, delayed",
+    "legs": []
+  },
+  "buffett-style": {
+    "note": "from 13f filings, delayed",
+    "legs": []
+  },
+  "ai-chips": {
+    "note": "thematic",
+    "legs": []
+  },
+  "watchlists": {
+    "pelosi-style": ["NVDA", "AAPL", "MSFT", "TSLA", "AMD", "META", "GOOGL", "AMZN"],
+    "buffett-style": ["AAPL", "BAC", "KO", "AXP", "CVX", "OXY", "MCO", "AON"],
+    "ai-chips": ["NVDA", "AMD", "AVGO", "LRCX", "AMAT", "MU"]
+  }
+}
